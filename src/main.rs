@@ -26,7 +26,7 @@ use board::hal::delay::Delay;
 use board::hal::prelude::*;
 use board::hal::stm32::{self, interrupt, Interrupt};
 
-// use cortex_m::asm;
+use cortex_m::asm;
 use cortex_m::peripheral::Peripherals;
 
 mod stm32f407;
@@ -34,6 +34,9 @@ use stm32f407::*;
 
 // ROM ptr shared with Interrupt handler. May point at either RAM or flash
 static mut CART_MEMORY: *const u8 = 0 as *const u8;
+
+// Flash addresses of available carts
+static mut CARTS: [*const u8; 256] = [0 as *const u8; 256];
 
 unsafe fn setup_gpio_pins() {
     let gpioa = Gpio::gpioa();
@@ -142,10 +145,21 @@ fn main() -> ! {
         //.pclk2(84.mhz())
         .freeze();
 
-    let rom = include_bytes!("carts/Pole Position (1982).vec");
+    let mut loader: [u8; 32768] = [0; 32768];
+    let loader_rom = include_bytes!("carts/multicart.bin");
 
     unsafe {
-        core::ptr::write_volatile(&mut CART_MEMORY, &rom[0] as *const u8);
+        core::ptr::copy(
+            loader_rom as *const u8,
+            &mut loader[0] as *mut u8,
+            loader_rom.len(),
+        );
+        core::ptr::write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
+
+        core::ptr::write_volatile(
+            &mut CARTS[0],
+            include_bytes!("carts/Pole Position (1982).vec") as *const u8,
+        );
     }
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
@@ -162,6 +176,8 @@ fn main() -> ! {
     }
 }
 
+static mut write_param: u8 = 0; // FIXME there's an idiomatic way for this in embedded rust
+
 #[interrupt]
 fn EXTI1() {
     let gpioa = Gpio::gpioa();
@@ -175,16 +191,6 @@ fn EXTI1() {
     // Clear interrupt pending bit
     unsafe { exti.pr.write(0b00000000_00000000_00000000_00000010) }
 
-    // Check if this is a cart access (ce == high, ce_inv == low)
-    let ce = (gpioa.idr.read() & 0b0100) != 0; // Read /CE
-    if ce {
-        unsafe {
-            gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
-            gpioe.odr1.write(0xff);
-        };
-        return;
-    }
-
     // Decode address lines (mixed between multiple GPIOs
     const AMASK_PD: u16 = 0b0000_1111_1100_1111; /* PD0-3 + PD6-11 */
     const AMASK_PE: u16 = 0b0000_0000_0011_0000; /* PE4-5 */
@@ -192,6 +198,42 @@ fn EXTI1() {
     let addr: u16 = (gpiod.idr.read() & AMASK_PD)
         | (gpioe.idr.read() & AMASK_PE)
         | (gpiob.idr.read() & AMASK_PB);
+
+    let pa = gpioa.idr.read();
+
+    // Check if this is a cart access (ce == high, ce_inv == low)
+    let ce = (pa & 0b0100) == 0; // Read *CE
+    if !ce {
+        unsafe {
+            gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
+            gpioe.odr1.write(0xff);
+        };
+        return;
+    }
+
+    let we = (pa & 0b1000) == 0; // Read *WE
+    if we {
+        // Reconfigure data pins for reading
+        unsafe {
+            gpioe.moder1.write(0b00000000_00000000); // 00: Input
+            gpioe.pupdr1.write(0b01010101_01010100); // 01: Pull-up
+        }
+
+        let v = (gpioe.idr.read() >> 8) as u8;
+        if addr == 0x7ffe {
+            unsafe { write_param = v };
+        } else if addr == 0x7fff {
+            if v == 1 {
+                unsafe { core::ptr::write_volatile(&mut CART_MEMORY, CARTS[0]) }
+            }
+        }
+
+        unsafe {
+            gpioe.moder1.write(0b01010101_01010101); // 01: General Purpose output mode
+            gpioe.pupdr1.write(0b00000000_00000000); // 00: No pull-up/pull-down
+        }
+        return;
+    }
 
     // Load the byte from ram array
     let v = unsafe {
