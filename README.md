@@ -5,7 +5,7 @@ A programmable Vectrex multicart based on ARM SOC
 
 This hack uses a cheap-ish STM32F407G development kit (STM32F407G-DISC1) to emulate vectrex carts. The carts are loaded from the internal flash of the STM32F4.
 
-# Hardware
+## Hardware
 
 I used an official STM32F407G-DISC1 board from STM. It is easy to source, and has a built-in ST-link programming / debug interface which is nice. There are smaller and cheaper development kits out there that may work as well.
 
@@ -16,7 +16,7 @@ make sure the used GPIOs aren't connected to board components such as LEDs, USB,
 
 For the physical Vectrex interface I simply desoldered the ROM from an old cart and replaced it with wires to the corresponding STM32F GPIO pins.
 
-## Pin mapping
+### Pin mapping
 Vectrex | STM32F407 | Note
 --------|-----------|-----
 *OE | PA1 | "inverse CPU E clock". Triggers cart emulation interrupt once every cycle.
@@ -48,10 +48,24 @@ GND | GND
 *NMI  |  -
 *IRQ  |  -
 
-# References
+## References
 * STM32F407 Reference Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/reference_manual/3d/6d/5a/66/b4/99/40/d4/DM00031020.pdf/files/DM00031020.pdf/jcr:content/translations/en.DM00031020.pdf
- * STM32F407G-DISC1 User Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/user_manual/70/fe/4a/3f/e7/e1/4f/7d/DM00039084.pdf/files/DM00039084.pdf/jcr:content/translations/en.DM00039084.pdf
+* STM32F407G-DISC1 User Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/user_manual/70/fe/4a/3f/e7/e1/4f/7d/DM00039084.pdf/files/DM00039084.pdf/jcr:content/translations/en.DM00039084.pdf
 * How to construct a Vectrex Multicart (Very simple) - *Tursi (M. Brent)* - http://www.harmlesslion.com/text/vectrex_multicart.htm
 * Emulating a GameBoy Cartridge with an STM32F4 - *Dhole* - http://dhole.github.io/post/gameboy_cartridge_emu_1/
 * Extreme Vectrex multicart - *Jeroen "Sprite" Domburg* - https://spritesmods.com/?art=veccart&page=1
 
+## License
+
+Licensed under either of
+
+ * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
+additional terms or conditions.
