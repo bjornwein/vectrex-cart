@@ -2,7 +2,7 @@
 authors = ["Björn Weinehall <gecko@acc.umu.se>"]
 edition = "2018"
 readme = "README.md"
-name = "stm-test"
+name = "vectrex-cart"
 version = "0.1.0"
 
 [dependencies]
@@ -35,7 +35,7 @@ version = "0.3.0"
 
 # this lets you use `cargo fix`!
 [[bin]]
-name = "stm-test"
+name = "vectrex-cart"
 test = false
 bench = false
 
