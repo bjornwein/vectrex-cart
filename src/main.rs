@@ -29,14 +29,11 @@ use board::hal::stm32::{self, interrupt, Interrupt};
 // use cortex_m::asm;
 use cortex_m::peripheral::Peripherals;
 
-use core::sync::atomic::{AtomicPtr, Ordering};
-
 mod stm32f407;
 use stm32f407::*;
 
-const ROM: &'static [u8; 8192] = include_bytes!("Pole Position (1982).vec");
-
-static CART_MEMORY: AtomicPtr<u8> = AtomicPtr::new(0 as *mut u8);
+// ROM ptr shared with Interrupt handler. May point at either RAM or flash
+static mut CART_MEMORY: *const u8 = 0 as *const u8;
 
 unsafe fn setup_gpio_pins() {
     let gpioa = Gpio::gpioa();
@@ -145,12 +142,10 @@ fn main() -> ! {
         //.pclk2(84.mhz())
         .freeze();
 
-    let mut cart: [u8; 65536] = [0; 65536];
+    let rom = include_bytes!("carts/Pole Position (1982).vec");
 
-    // Load cart from flash to RAM
     unsafe {
-        core::ptr::copy(ROM as *const u8, &mut cart[0] as *mut u8, ROM.len());
-        CART_MEMORY.store(&mut cart[0] as *mut u8, Ordering::Release);
+        core::ptr::write_volatile(&mut CART_MEMORY, &rom[0] as *const u8);
     }
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
@@ -183,8 +178,10 @@ fn EXTI1() {
     // Check if this is a cart access (ce == high, ce_inv == low)
     let ce = (gpioa.idr.read() & 0b0100) != 0; // Read /CE
     if ce {
-        unsafe { gpioe.otyper1.write(0b1111_1111) } // 1: output open-drain
-        unsafe { gpioe.odr1.write(0xff) }
+        unsafe {
+            gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
+            gpioe.odr1.write(0xff);
+        };
         return;
     }
 
@@ -197,12 +194,16 @@ fn EXTI1() {
         | (gpiob.idr.read() & AMASK_PB);
 
     // Load the byte from ram array
-    let cart = CART_MEMORY.load(Ordering::Acquire);
-    let v = unsafe { *cart.offset(addr as isize) };
+    let v = unsafe {
+        let rom = core::ptr::read_volatile(&CART_MEMORY);
+        *rom.offset(addr as isize)
+    };
 
     /* At this point we're ~320ns after /OE high. Need > 333ns (or wait for /CE low) */
     // rpt_nop!(1);
 
-    unsafe { gpioe.odr1.write(v) }
-    unsafe { gpioe.otyper1.write(0b0000_0000) } // 0: output push-pull
+    unsafe {
+        gpioe.odr1.write(v);
+        gpioe.otyper1.write(0b0000_0000); // 0: output push-pull
+    };
 }
