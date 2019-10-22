@@ -163,6 +163,14 @@ fn main() -> ! {
             &mut CARTS[0],
             include_bytes!("carts/Pole Position (1982).vec") as *const u8,
         );
+        core::ptr::write_volatile(
+            &mut CARTS[1],
+            include_bytes!("carts/Polar Rescue (1983).vec") as *const u8,
+        );
+        core::ptr::write_volatile(
+            &mut CARTS[2],
+            include_bytes!("carts/Rip-Off (1982).vec") as *const u8,
+        );
     }
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
@@ -250,9 +258,15 @@ fn EXTI1() {
             *WRITE_PARAM = v;
         } else if addr == 0x7fff {
             if v == 1 {
-                // Switch cart. Also reset the "boot triggered" counter
-                *BOOT_TRIGGERED = 0;
-                unsafe { core::ptr::write_volatile(&mut CART_MEMORY, CARTS[0]) }
+                unsafe {
+                    // Switch to the selected cart
+                    core::ptr::write_volatile(&mut CART_MEMORY, CARTS[*WRITE_PARAM as usize]);
+
+                    // Store selected cart (multicart-specific)
+                    let loader = core::ptr::read_volatile(&LOADER_MEMORY);
+                    let lastselcart = loader.offset(0x3ff);
+                    core::ptr::write_volatile(lastselcart, *WRITE_PARAM);
+                }
             }
         }
 
