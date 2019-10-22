@@ -26,7 +26,7 @@ use board::hal::delay::Delay;
 use board::hal::prelude::*;
 use board::hal::stm32::{self, interrupt, Interrupt};
 
-use cortex_m::asm;
+// use cortex_m::asm;
 use cortex_m::peripheral::Peripherals;
 
 mod stm32f407;
@@ -104,6 +104,75 @@ unsafe fn setup_gpio_pins() {
     exti.imr.modify(|v| v | line_1_bit);
 }
 
+fn write_string_pointer(buf: &mut [u8], ptr: u16) -> &mut [u8] {
+    buf[0] = (ptr >> 8) as u8;
+    buf[1] = (ptr & 0xff) as u8;
+
+    &mut buf[2..]
+}
+
+fn write_string<'a>(strings: &'a mut [u8], string: &str) -> &'a mut [u8] {
+    let src = string.as_ptr() as *const u8;
+    let dst = strings.as_mut_ptr() as *mut u8;
+    unsafe { core::ptr::copy(src, dst, string.len()) }
+
+    strings[string.len()] = 0x80; // String terminator
+    &mut strings[string.len() + 1..]
+}
+
+/* Load ROMs into flash (at compile time), and
+ * set up the multicart loader data table (at runtime).
+ * TODO: the table can be constructed at compile time,
+ * stored in flash and just copied onto the RAM area on
+ * boot.
+ * TODO: technically the table can be injected into the
+ * multicart ROM at compile time and we don't need this
+ * at all at runtime.
+ * TODO: replace multicart protocol with a RAM area in the unused space?
+ */
+fn setup_carts(loader: &mut [u8]) {
+    // multicart ROM should be in flash, and then copied into
+    // RAM for writability
+    let loader_rom = include_bytes!("carts/multicart.bin");
+    unsafe {
+        core::ptr::copy(
+            loader_rom as *const u8,
+            &mut loader[0] as *mut u8,
+            loader_rom.len(),
+        );
+        core::ptr::write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
+        core::ptr::write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
+    }
+
+    let (mut pointers, mut strings) = loader[0x400..].split_at_mut(257 * 2);
+    let mut string_ptr = 0x400 + 257 * 2;
+    let mut cart_idx = 0;
+
+    macro_rules! add_cart {
+        ($name:expr, $file:expr) => {
+            let rom = include_bytes!(concat!("carts/", $file)) as *const u8;
+            unsafe { core::ptr::write_volatile(&mut CARTS[cart_idx], rom) }
+
+            #[allow(unused_assignments)]
+            {
+                let string = $name;
+                pointers = write_string_pointer(pointers, string_ptr);
+                strings = write_string(strings, string);
+                string_ptr += string.len() as u16 + 1;
+
+                cart_idx += 1;
+            }
+        };
+    };
+
+    add_cart!("POLE POSITION (1982)", "Pole Position (1982).vec");
+    add_cart!("POLAR RESCUE  (1983)", "Polar Rescue (1983).vec");
+    add_cart!("RIP-OFF       (1982)", "Rip-Off (1982).vec");
+
+    // String list end
+    write_string_pointer(pointers, 0);
+}
+
 #[entry]
 fn main() -> ! {
     // Configure LED outputs, using HAL
@@ -148,30 +217,7 @@ fn main() -> ! {
         .freeze();
 
     let mut loader: [u8; 32768] = [0; 32768];
-    let loader_rom = include_bytes!("carts/multicart.bin");
-
-    unsafe {
-        core::ptr::copy(
-            loader_rom as *const u8,
-            &mut loader[0] as *mut u8,
-            loader_rom.len(),
-        );
-        core::ptr::write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
-        core::ptr::write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
-
-        core::ptr::write_volatile(
-            &mut CARTS[0],
-            include_bytes!("carts/Pole Position (1982).vec") as *const u8,
-        );
-        core::ptr::write_volatile(
-            &mut CARTS[1],
-            include_bytes!("carts/Polar Rescue (1983).vec") as *const u8,
-        );
-        core::ptr::write_volatile(
-            &mut CARTS[2],
-            include_bytes!("carts/Rip-Off (1982).vec") as *const u8,
-        );
-    }
+    setup_carts(&mut loader);
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
 
