@@ -34,6 +34,8 @@ use stm32f407::*;
 
 // ROM ptr shared with Interrupt handler. May point at either RAM or flash
 static mut CART_MEMORY: *const u8 = 0 as *const u8;
+// RAM ptr to the loader binary
+static mut LOADER_MEMORY: *mut u8 = 0 as *mut u8;
 
 // Flash addresses of available carts
 static mut CARTS: [*const u8; 256] = [0 as *const u8; 256];
@@ -155,6 +157,7 @@ fn main() -> ! {
             loader_rom.len(),
         );
         core::ptr::write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
+        core::ptr::write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
 
         core::ptr::write_volatile(
             &mut CARTS[0],
@@ -166,20 +169,21 @@ fn main() -> ! {
 
     // Get delay provider
     let mut delay = Delay::new(cp.SYST, clocks);
-    blue.set_high();
 
     loop {
+        blue.set_high();
         green.set_high();
-        delay.delay_ms(100_u16);
+        delay.delay_ms(500_u16);
         green.set_low();
-        delay.delay_ms(100_u16);
+        delay.delay_ms(500_u16);
     }
 }
 
-static mut write_param: u8 = 0; // FIXME there's an idiomatic way for this in embedded rust
-
 #[interrupt]
 fn EXTI1() {
+    static mut WRITE_PARAM: u8 = 0;
+    static mut BOOT_TRIGGERED: u8 = 0;
+
     let gpioa = Gpio::gpioa();
     let gpiob = Gpio::gpiob();
     let gpiod = Gpio::gpiod();
@@ -208,6 +212,28 @@ fn EXTI1() {
             gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
             gpioe.odr1.write(0xff);
         };
+
+        // Check for "boot" sequence
+        // Assume address 0x7000 (start of BIOS) is only read at boot.
+        // (Address is really 0xF000, but bit 15 is *CE)
+        if addr == 0x7000 {
+            let rom = unsafe { core::ptr::read_volatile(&CART_MEMORY) };
+            let loader = unsafe { core::ptr::read_volatile(&LOADER_MEMORY) };
+            if rom == loader {
+                // Ignore bootups from multicart loader
+                *BOOT_TRIGGERED = 0;
+            } else if *BOOT_TRIGGERED > 0 {
+                // Turn off blue led for fun and profit
+                unsafe { gpiod.bsrr.write(0b10000000_00000000_00000000_00000000) }
+
+                // Swap in multicart loader under the hood
+                unsafe { core::ptr::write_volatile(&mut CART_MEMORY, loader) }
+                *BOOT_TRIGGERED = 0;
+            } else {
+                *BOOT_TRIGGERED += 1;
+            }
+        }
+
         return;
     }
 
@@ -221,9 +247,11 @@ fn EXTI1() {
 
         let v = (gpioe.idr.read() >> 8) as u8;
         if addr == 0x7ffe {
-            unsafe { write_param = v };
+            *WRITE_PARAM = v;
         } else if addr == 0x7fff {
             if v == 1 {
+                // Switch cart. Also reset the "boot triggered" counter
+                *BOOT_TRIGGERED = 0;
                 unsafe { core::ptr::write_volatile(&mut CART_MEMORY, CARTS[0]) }
             }
         }
