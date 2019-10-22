@@ -14,7 +14,7 @@ make sure the used GPIOs aren't connected to board components such as LEDs, USB,
 
 (The plentiful on-board stuff on the STM32F407G-DISC1 is the reason why the address lines are such a mess)
 
-For the physical Vectrex interface I simply desoldered the ROM from an old cart and replaced it with wires to the corresponding STM32F GPIO pins.
+For the physical Vectrex interface I simply desoldered the ROM from an old cart and replaced it with wires to the corresponding STM32F GPIO pins. This doesn't look good, but it works and requires only a minimum of soldering. 
 
 ### Pin mapping
 Vectrex | STM32F407 | Note
@@ -48,6 +48,16 @@ GND | GND
 *NMI  |  -
 *IRQ  |  -
 
+## Software
+
+To build the ARM code you need an Cortex-M4F rust toolchain. See the Embedded Rust Book for installation instructions: https://rust-embedded.github.io/book/intro/tooling.html
+
+The main work is done by an interrupt routing that incidentally has just about good enough timing to handle the data. There should be a few cycles left outside to add more stuff later.
+
+The code is very far from idiomatic rust, but I didn't feel the need for safe abstractions for this little project. Suggestions on improvements are welcome.
+
+I chose to use Jeroen Domburg's *Extreme Multicart* protocol and multicart loader ROM, so there is a simple protocol implemented to pass data back
+
 ## References
 * STM32F407 Reference Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/reference_manual/3d/6d/5a/66/b4/99/40/d4/DM00031020.pdf/files/DM00031020.pdf/jcr:content/translations/en.DM00031020.pdf
 * STM32F407G-DISC1 User Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/user_manual/70/fe/4a/3f/e7/e1/4f/7d/DM00039084.pdf/files/DM00039084.pdf/jcr:content/translations/en.DM00039084.pdf
@@ -69,3 +79,8 @@ at your option.
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
 additional terms or conditions.
+
+### 3rd party components
+
+Jeroen Domburg's [multicart/multicart.asm] is licensed under GNU LGPL v3. See that file for more information.
+
