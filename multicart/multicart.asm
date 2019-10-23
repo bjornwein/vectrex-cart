@@ -173,10 +173,7 @@ skipymove
 	lsla
 	adda cursor
 	sta $7ffe	;Store in special cart location
-	ldu #$f000	;Warm start address
-	pshs u		;Push to stack so rpcfn will return to this
-	lda #1		;rpc call to load a rom
-	jmp rpcfn	;Call
+	jmp rpcfn	;Call RPC
 	;We shouldn't return here.
 nobuttons
 	jmp loop
@@ -197,17 +194,10 @@ nozero
 ;Rpc function. Because this makes the cart unavailable, this
 ;will copied to SRAM. Call as rpcfn.
 rpcfndat
+	lda #1		;rpc call to load a rom
 	sta $7fff
-rpcwaitloop
-	lda $0
-	cmpa #'g'
-	bne rpcwaitloop
-	lda $1
-	cmpa #' '
-	bne rpcwaitloop
-	rts
+	jmp Cold_Start
 rpcfndatend
-
 
 ;Test multicart list data. This gets overwritten by the firmware running in the
 ;STM with actual cartridge data.
