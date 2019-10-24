@@ -82,5 +82,5 @@ additional terms or conditions.
 
 ### 3rd party components
 
-Jeroen Domburg's [multicart/multicart.asm] is licensed under GNU LGPL v3. See that file for more information.
+Jeroen Domburg's [multicart](multicart/multicart.asm) is licensed under GNU LGPL v3. See that file for more information.
 
