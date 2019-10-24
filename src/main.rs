@@ -34,12 +34,15 @@ use core::ptr::{copy, null, null_mut, read_volatile, write_volatile};
 mod stm32f407;
 use stm32f407::*;
 
-// ROM ptr shared with Interrupt handler. May point at either RAM or flash
+// ROM ptr shared with Interrupt handler.
+// May point at any cart in flash, or even in RAM
 static mut CART_MEMORY: *const u8 = null();
-// RAM ptr to the loader binary
-static mut LOADER_MEMORY: *mut u8 = null_mut();
-// PTR to memory extension and RPC command buffer
+// ROM ptr to the loader binary
+static mut LOADER_MEMORY: *const u8 = null();
+// RAM ptr to memory extension and RPC command buffer
 static mut EXTENDED_MEMORY: *mut u8 = null_mut();
+
+const RAMFILEDATA: usize = 0xC002;
 
 // Flash addresses of available carts
 static mut CARTS: [*const u8; 256] = [0 as *const u8; 256];
@@ -108,7 +111,7 @@ unsafe fn setup_gpio_pins() {
     exti.imr.modify(|v| v | line_1_bit);
 }
 
-fn write_string_pointer(buf: &mut [u8], ptr: u16) -> &mut [u8] {
+fn write_string_pointer(buf: &mut [u8], ptr: usize) -> &mut [u8] {
     buf[0] = (ptr >> 8) as u8;
     buf[1] = (ptr & 0xff) as u8;
 
@@ -134,22 +137,13 @@ fn write_string<'a>(strings: &'a mut [u8], string: &str) -> &'a mut [u8] {
  * at all at runtime.
  * TODO: replace multicart protocol with a RAM area in the unused space?
  */
-fn setup_carts(loader: &mut [u8]) {
-    // multicart ROM should be in flash, and then copied into
-    // RAM for writability
-    let loader_rom = include_bytes!("carts/multicart.bin");
-    unsafe {
-        copy(
-            loader_rom as *const u8,
-            &mut loader[0] as *mut u8,
-            loader_rom.len(),
-        );
-        write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
-        write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
-    }
+fn setup_carts(ram: &mut [u8]) {
+    let loader = include_bytes!("carts/multicart.bin");
+    unsafe { write_volatile(&mut CART_MEMORY, &loader[0] as *const u8) }
+    unsafe { write_volatile(&mut LOADER_MEMORY, &loader[0] as *const u8) }
 
-    let (mut pointers, mut strings) = loader[0x400..].split_at_mut(257 * 2);
-    let mut string_ptr = 0x400 + 257 * 2;
+    let (mut pointers, mut strings) = ram[RAMFILEDATA - 0x8000..].split_at_mut(257 * 2);
+    let mut string_ptr = RAMFILEDATA + 257 * 2;
     let mut cart_idx = 0;
 
     macro_rules! add_cart {
@@ -162,7 +156,7 @@ fn setup_carts(loader: &mut [u8]) {
                 let string = $name;
                 pointers = write_string_pointer(pointers, string_ptr);
                 strings = write_string(strings, string);
-                string_ptr += string.len() as u16 + 1;
+                string_ptr += string.len() + 1;
 
                 cart_idx += 1;
             }
@@ -220,12 +214,11 @@ fn main() -> ! {
         //.pclk2(84.mhz())
         .freeze();
 
-    let mut loader: [u8; 32768] = [0; 32768];
-    setup_carts(&mut loader);
-
     // 18432 bytes RAM expansion
     let mut extension: [u8; 0xC800 - 0x8000] = [0; 0xC800 - 0x8000];
     unsafe { write_volatile(&mut EXTENDED_MEMORY, &mut extension[0] as *mut u8) }
+
+    setup_carts(&mut extension);
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
 

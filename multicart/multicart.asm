@@ -23,6 +23,7 @@ lastpage EQU $ca04
 rpcfn	EQU $cb00
 
 lastselcart EQU $C000 ; start of multicart private area of RAM expansion
+ramfiledata EQU $C002 ; multicart filedata area shared with cart emulator
 rpcparam EQU $C7FE
 rpccommand EQU $C7FF
 
@@ -82,7 +83,11 @@ nohighlight
 	JSR Intensity_5F
 hlend
 
+  ldu #ramfiledata
+  cmpu #0
+  bne useramdata
 	ldu #filedata	;data of pointer to filenames
+useramdata
 	ldb page		;load page no
 	lda #0
 	lslb			;*8
