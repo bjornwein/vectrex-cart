@@ -29,13 +29,17 @@ use board::hal::stm32::{self, interrupt, Interrupt};
 // use cortex_m::asm;
 use cortex_m::peripheral::Peripherals;
 
+use core::ptr::{copy, null, null_mut, read_volatile, write_volatile};
+
 mod stm32f407;
 use stm32f407::*;
 
 // ROM ptr shared with Interrupt handler. May point at either RAM or flash
-static mut CART_MEMORY: *const u8 = 0 as *const u8;
+static mut CART_MEMORY: *const u8 = null();
 // RAM ptr to the loader binary
-static mut LOADER_MEMORY: *mut u8 = 0 as *mut u8;
+static mut LOADER_MEMORY: *mut u8 = null_mut();
+// PTR to memory extension and RPC command buffer
+static mut EXTENDED_MEMORY: *mut u8 = null_mut();
 
 // Flash addresses of available carts
 static mut CARTS: [*const u8; 256] = [0 as *const u8; 256];
@@ -114,7 +118,7 @@ fn write_string_pointer(buf: &mut [u8], ptr: u16) -> &mut [u8] {
 fn write_string<'a>(strings: &'a mut [u8], string: &str) -> &'a mut [u8] {
     let src = string.as_ptr() as *const u8;
     let dst = strings.as_mut_ptr() as *mut u8;
-    unsafe { core::ptr::copy(src, dst, string.len()) }
+    unsafe { copy(src, dst, string.len()) }
 
     strings[string.len()] = 0x80; // String terminator
     &mut strings[string.len() + 1..]
@@ -135,13 +139,13 @@ fn setup_carts(loader: &mut [u8]) {
     // RAM for writability
     let loader_rom = include_bytes!("carts/multicart.bin");
     unsafe {
-        core::ptr::copy(
+        copy(
             loader_rom as *const u8,
             &mut loader[0] as *mut u8,
             loader_rom.len(),
         );
-        core::ptr::write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
-        core::ptr::write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
+        write_volatile(&mut CART_MEMORY, &loader[0] as *const u8);
+        write_volatile(&mut LOADER_MEMORY, CART_MEMORY as *mut u8);
     }
 
     let (mut pointers, mut strings) = loader[0x400..].split_at_mut(257 * 2);
@@ -151,7 +155,7 @@ fn setup_carts(loader: &mut [u8]) {
     macro_rules! add_cart {
         ($name:expr, $file:expr) => {
             let rom = include_bytes!(concat!("carts/", $file)) as *const u8;
-            unsafe { core::ptr::write_volatile(&mut CARTS[cart_idx], rom) }
+            unsafe { write_volatile(&mut CARTS[cart_idx], rom) }
 
             #[allow(unused_assignments)]
             {
@@ -219,6 +223,10 @@ fn main() -> ! {
     let mut loader: [u8; 32768] = [0; 32768];
     setup_carts(&mut loader);
 
+    // 18432 bytes RAM expansion
+    let mut extension: [u8; 0xC800 - 0x8000] = [0; 0xC800 - 0x8000];
+    unsafe { write_volatile(&mut EXTENDED_MEMORY, &mut extension[0] as *mut u8) }
+
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
 
     // Get delay provider
@@ -235,7 +243,6 @@ fn main() -> ! {
 
 #[interrupt]
 fn EXTI1() {
-    static mut WRITE_PARAM: u8 = 0;
     static mut BOOT_TRIGGERED: u8 = 0;
 
     let gpioa = Gpio::gpioa();
@@ -257,20 +264,69 @@ fn EXTI1() {
         | (gpioe.idr.read() & AMASK_PE)
         | (gpiob.idr.read() & AMASK_PB);
 
+    // Check if this is a cart access (*ce == low)
     let pa = gpioa.idr.read();
-
-    // Check if this is a cart access (ce == high, ce_inv == low)
+    let we = (pa & 0b1000) == 0; // Read *WE
     let ce = (pa & 0b0100) == 0; // Read *CE
-    if !ce {
-        unsafe {
-            gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
-            gpioe.odr1.write(0xff);
-        };
+    match (ce, we, addr) {
+        (true, false, addr) => {
+            // Normal cart ROM read. Critical path
+            unsafe {
+                let rom = read_volatile(&CART_MEMORY);
+                gpioe.odr1.write(*rom.offset(addr as isize));
+                gpioe.otyper1.write(0b0000_0000); // 0: output push-pull
+            };
+        }
+        (false, false, addr) if addr <= 0xC7FF - 0x8000 => {
+            // RAM extension read
+            unsafe {
+                let ram = read_volatile(&EXTENDED_MEMORY);
+                gpioe.odr1.write(*ram.offset(addr as isize));
+                gpioe.otyper1.write(0b0000_0000); // 0: output push-pull
+            };
+        }
+        (false, true, addr) if addr <= 0xC7FF - 0x8000 => {
+            // RAM extension write
+            unsafe {
+                gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
+                gpioe.odr1.write(0xff);
+            };
 
-        // Check for "boot" sequence
-        // Assume address 0x7000 (start of BIOS) is only read at boot.
-        // (Address is really 0xF000, but bit 15 is *CE)
-        if addr == 0x7000 {
+            // Reconfigure data pins for reading
+            unsafe {
+                gpioe.moder1.write(0b00000000_00000000); // 00: Input
+                gpioe.pupdr1.write(0b01010101_01010100); // 01: Pull-up
+            }
+
+            unsafe { gpiod.bsrr.write(0b10000000_00000000_00000000_00000000) }
+
+            let ram = unsafe { read_volatile(&EXTENDED_MEMORY) };
+            let byte = (gpioe.idr.read() >> 8) as u8;
+            if addr == 0xC7FF - 0x8000 {
+                match byte {
+                    // RPC command
+                    0x01 => unsafe {
+                        // Switch to the selected cart
+                        let param = *ram.offset((0xC7FE - 0x8000) as isize);
+                        write_volatile(&mut CART_MEMORY, CARTS[param as usize]);
+                    },
+                    _ => {}
+                }
+            }
+            unsafe { *ram.offset(addr as isize) = byte }
+
+            unsafe {
+                gpioe.moder1.write(0b01010101_01010101); // 01: General Purpose output mode
+                gpioe.pupdr1.write(0b00000000_00000000); // 00: No pull-up/pull-down
+            }
+        }
+        (false, false, 0x7000) => {
+            // "Cold_Boot" read, used to detect reboots
+            unsafe {
+                gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
+                gpioe.odr1.write(0xff);
+            };
+
             let rom = unsafe { core::ptr::read_volatile(&CART_MEMORY) };
             let loader = unsafe { core::ptr::read_volatile(&LOADER_MEMORY) };
             if rom == loader {
@@ -284,56 +340,15 @@ fn EXTI1() {
                 unsafe { core::ptr::write_volatile(&mut CART_MEMORY, loader) }
                 *BOOT_TRIGGERED = 0;
             } else {
-                *BOOT_TRIGGERED += 1;
+                *BOOT_TRIGGERED = 1;
             }
         }
-
-        return;
-    }
-
-    let we = (pa & 0b1000) == 0; // Read *WE
-    if we {
-        // Reconfigure data pins for reading
-        unsafe {
-            gpioe.moder1.write(0b00000000_00000000); // 00: Input
-            gpioe.pupdr1.write(0b01010101_01010100); // 01: Pull-up
+        _ => {
+            // Anything else
+            unsafe {
+                gpioe.otyper1.write(0b1111_1111); // 1: output open-drain
+                gpioe.odr1.write(0xff);
+            };
         }
-
-        let v = (gpioe.idr.read() >> 8) as u8;
-        if addr == 0x7ffe {
-            *WRITE_PARAM = v;
-        } else if addr == 0x7fff {
-            if v == 1 {
-                unsafe {
-                    // Switch to the selected cart
-                    core::ptr::write_volatile(&mut CART_MEMORY, CARTS[*WRITE_PARAM as usize]);
-
-                    // Store selected cart (multicart-specific)
-                    let loader = core::ptr::read_volatile(&LOADER_MEMORY);
-                    let lastselcart = loader.offset(0x3ff);
-                    core::ptr::write_volatile(lastselcart, *WRITE_PARAM);
-                }
-            }
-        }
-
-        unsafe {
-            gpioe.moder1.write(0b01010101_01010101); // 01: General Purpose output mode
-            gpioe.pupdr1.write(0b00000000_00000000); // 00: No pull-up/pull-down
-        }
-        return;
-    }
-
-    // Load the byte from ram array
-    let v = unsafe {
-        let rom = core::ptr::read_volatile(&CART_MEMORY);
-        *rom.offset(addr as isize)
-    };
-
-    /* At this point we're ~320ns after /OE high. Need > 333ns (or wait for /CE low) */
-    // rpt_nop!(1);
-
-    unsafe {
-        gpioe.odr1.write(v);
-        gpioe.otyper1.write(0b0000_0000); // 0: output push-pull
     };
 }

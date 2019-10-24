@@ -22,6 +22,10 @@ lastpage EQU $ca04
 
 rpcfn	EQU $cb00
 
+lastselcart EQU $C000 ; start of multicart private area of RAM expansion
+rpcparam EQU $C7FE
+rpccommand EQU $C7FF
+
 ;Cartridge header
 	ORG 0
 	fcb "g GCE 2015", $80		;'g' is copyright sign
@@ -172,7 +176,8 @@ skipymove
 	lsla
 	lsla
 	adda cursor
-	sta $7ffe	;Store in special cart location
+  sta lastselcart; Store in private RAM area
+	sta rpcparam	;Store in special cart location
 	jmp rpcfn	;Call RPC
 	;We shouldn't return here.
 nobuttons
@@ -195,16 +200,13 @@ nozero
 ;will copied to SRAM. Call as rpcfn.
 rpcfndat
 	lda #1		;rpc call to load a rom
-	sta $7fff
+	sta rpccommand
 	jmp Cold_Start
 rpcfndatend
 
 ;Test multicart list data. This gets overwritten by the firmware running in the
 ;STM with actual cartridge data.
 
-	org $3ff
-lastselcart
-	fcb 0
 	org $400
 filedata
 	fdb text0
