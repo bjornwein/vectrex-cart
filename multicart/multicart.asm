@@ -1,4 +1,5 @@
 ; Copyright (C) 2015 Jeroen Domburg <jeroen at spritesmods.com>
+; Copyright (C) 2019 Björn Weinehall
 ;
 ; This library is free software: you can redistribute it and/or modify
 ; it under the terms of the GNU Lesser General Public License as published by
@@ -29,7 +30,7 @@ rpccommand EQU $C7FF
 
 ;Cartridge header
 	ORG 0
-	fcb "g GCE 2015", $80		;'g' is copyright sign
+	fcb "g GCE 2019", $80		;'g' is copyright sign
 	fdb music1					;music from the rom
 	fcb $F8, $50, $20, -$56		; height, width, rel y, rel x (from 0,0)
 	fcb "MULTICART",$80			; some game information ending with $80

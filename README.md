@@ -56,7 +56,8 @@ The main work is done by an interrupt routing that incidentally has just about g
 
 The code is very far from idiomatic rust, but I didn't feel the need for safe abstractions for this little project. Suggestions on improvements are welcome.
 
-I chose to use Jeroen Domburg's *Extreme Multicart* protocol and multicart loader ROM, so there is a simple protocol implemented to pass data back
+I chose to continue on Jeroen Domburg's *Extreme Multicart* protocol and multicart loader ROM, so there is a simple protocol implemented to pass data back.
+For assembling the 6809 multicart code you need a [http://www.6809.org.uk/asm6809/dl/2.3/](6809 assembler).
 
 ## References
 * STM32F407 Reference Manual - *ST Microelectronics* - https://www.st.com/content/ccc/resource/technical/document/reference_manual/3d/6d/5a/66/b4/99/40/d4/DM00031020.pdf/files/DM00031020.pdf/jcr:content/translations/en.DM00031020.pdf
