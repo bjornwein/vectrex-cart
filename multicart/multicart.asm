@@ -24,14 +24,14 @@ lastpage EQU $ca04
 rpcfn	EQU $cb00
 
 lastselcart EQU $C000 ; start of multicart private area of RAM expansion
-ramfiledata EQU $C002 ; multicart filedata area shared with cart emulator
 rpcparam EQU $C7FE
 rpccommand EQU $C7FF
 
 ;Cartridge header
 	ORG 0
 	fcb "g GCE 2019", $80		;'g' is copyright sign
-	fdb music1					;music from the rom
+	;fdb music1					;music from the rom
+  fdb shortmusic
 	fcb $F8, $50, $20, -$56		; height, width, rel y, rel x (from 0,0)
 	fcb "MULTICART",$80			; some game information ending with $80
 	fcb 0						; end of game header
@@ -84,11 +84,7 @@ nohighlight
 	JSR Intensity_5F
 hlend
 
-  ldu #ramfiledata
-  cmpu #0
-  bne useramdata
 	ldu #filedata	;data of pointer to filenames
-useramdata
 	ldb page		;load page no
 	lda #0
 	lslb			;*8
@@ -209,6 +205,11 @@ rpcfndat
 	sta rpccommand
 	jmp Cold_Start
 rpcfndatend
+
+; Shortest possible music. Nice for faster test iterations
+shortmusic
+    fdb $FEE8, $FEB6
+    fcb 0,$80
 
 ;Test multicart list data. This gets overwritten by the firmware running in the
 ;STM with actual cartridge data.

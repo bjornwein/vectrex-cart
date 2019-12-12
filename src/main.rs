@@ -29,23 +29,23 @@ use board::hal::stm32::{self, interrupt, Interrupt};
 // use cortex_m::asm;
 use cortex_m::peripheral::Peripherals;
 
-use core::ptr::{copy, null, null_mut, read_volatile, write_volatile};
+use core::ptr::{null_mut, read_volatile, write_volatile};
 
 mod stm32f407;
 use stm32f407::*;
 
-// ROM ptr shared with Interrupt handler.
-// May point at any cart in flash, or even in RAM
-static mut CART_MEMORY: *const u8 = null();
-// ROM ptr to the loader binary
-static mut LOADER_MEMORY: *const u8 = null();
 // RAM ptr to memory extension and RPC command buffer
 static mut EXTENDED_MEMORY: *mut u8 = null_mut();
 
-const RAMFILEDATA: usize = 0xC002;
+// ROM ptr to the generated loader binary
+const LOADER_ROM: *const u8 = include_bytes!(concat!(env!("OUT_DIR"), "/loader.bin")) as *const u8;
+
+// ROM ptr shared with Interrupt handler.
+// May point at any cart in flash, or even in RAM
+static mut CART_MEMORY: *const u8 = LOADER_ROM;
 
 // Flash addresses of available carts
-static mut CARTS: [*const u8; 256] = [0 as *const u8; 256];
+include!(concat!(env!("OUT_DIR"), "/carts.rs"));
 
 unsafe fn setup_gpio_pins() {
     let gpioa = Gpio::gpioa();
@@ -111,66 +111,6 @@ unsafe fn setup_gpio_pins() {
     exti.imr.modify(|v| v | line_1_bit);
 }
 
-fn write_string_pointer(buf: &mut [u8], ptr: usize) -> &mut [u8] {
-    buf[0] = (ptr >> 8) as u8;
-    buf[1] = (ptr & 0xff) as u8;
-
-    &mut buf[2..]
-}
-
-fn write_string<'a>(strings: &'a mut [u8], string: &str) -> &'a mut [u8] {
-    let src = string.as_ptr() as *const u8;
-    let dst = strings.as_mut_ptr() as *mut u8;
-    unsafe { copy(src, dst, string.len()) }
-
-    strings[string.len()] = 0x80; // String terminator
-    &mut strings[string.len() + 1..]
-}
-
-/* Load ROMs into flash (at compile time), and
- * set up the multicart loader data table (at runtime).
- * TODO: the table can be constructed at compile time,
- * stored in flash and just copied onto the RAM area on
- * boot.
- * TODO: technically the table can be injected into the
- * multicart ROM at compile time and we don't need this
- * at all at runtime.
- * TODO: replace multicart protocol with a RAM area in the unused space?
- */
-fn setup_carts(ram: &mut [u8]) {
-    let loader = include_bytes!("carts/multicart.bin");
-    unsafe { write_volatile(&mut CART_MEMORY, &loader[0] as *const u8) }
-    unsafe { write_volatile(&mut LOADER_MEMORY, &loader[0] as *const u8) }
-
-    let (mut pointers, mut strings) = ram[RAMFILEDATA - 0x8000..].split_at_mut(257 * 2);
-    let mut string_ptr = RAMFILEDATA + 257 * 2;
-    let mut cart_idx = 0;
-
-    macro_rules! add_cart {
-        ($name:expr, $file:expr) => {
-            let rom = include_bytes!(concat!("carts/", $file)) as *const u8;
-            unsafe { write_volatile(&mut CARTS[cart_idx], rom) }
-
-            #[allow(unused_assignments)]
-            {
-                let string = $name;
-                pointers = write_string_pointer(pointers, string_ptr);
-                strings = write_string(strings, string);
-                string_ptr += string.len() + 1;
-
-                cart_idx += 1;
-            }
-        };
-    };
-
-    add_cart!("POLE POSITION (1982)", "Pole Position (1982).vec");
-    add_cart!("POLAR RESCUE  (1983)", "Polar Rescue (1983).vec");
-    add_cart!("RIP-OFF       (1982)", "Rip-Off (1982).vec");
-
-    // String list end
-    write_string_pointer(pointers, 0);
-}
-
 #[entry]
 fn main() -> ! {
     // Configure LED outputs, using HAL
@@ -217,8 +157,6 @@ fn main() -> ! {
     // 18432 bytes RAM expansion
     let mut extension: [u8; 0xC800 - 0x8000] = [0; 0xC800 - 0x8000];
     unsafe { write_volatile(&mut EXTENDED_MEMORY, &mut extension[0] as *mut u8) }
-
-    setup_carts(&mut extension);
 
     unsafe { board::NVIC::unmask(Interrupt::EXTI1) }
 
@@ -321,8 +259,7 @@ fn EXTI1() {
             };
 
             let rom = unsafe { core::ptr::read_volatile(&CART_MEMORY) };
-            let loader = unsafe { core::ptr::read_volatile(&LOADER_MEMORY) };
-            if rom == loader {
+            if rom == LOADER_ROM {
                 // Ignore bootups from multicart loader
                 *BOOT_TRIGGERED = 0;
             } else if *BOOT_TRIGGERED > 0 {
@@ -330,7 +267,7 @@ fn EXTI1() {
                 unsafe { gpiod.bsrr.write(0b10000000_00000000_00000000_00000000) }
 
                 // Swap in multicart loader under the hood
-                unsafe { core::ptr::write_volatile(&mut CART_MEMORY, loader) }
+                unsafe { core::ptr::write_volatile(&mut CART_MEMORY, LOADER_ROM) }
                 *BOOT_TRIGGERED = 0;
             } else {
                 *BOOT_TRIGGERED = 1;
